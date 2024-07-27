@@ -14,35 +14,37 @@ import java.util.Properties;
  */
 public class Snowflake {
 
-    private Logger logger = LoggerFactory
-            .getLogger(Snowflake.class);
-
-    private final long epoch;
-    private final long workerIdBits = 10L;
-    private final long maxWorkerId = ~(-1L << workerIdBits);
-    private final long sequenceMaskBits = 4L;
-    private final long maxSequenceMask = ~(-1L << sequenceMaskBits);
+    private Logger logger = LoggerFactory.getLogger(Snowflake.class);
+    private volatile static Snowflake instance;
+    private long epoch;
     private final long sequenceBits = 8L;
     private final long maxSequence = ~(-1L << sequenceBits);
+    private final long sequenceMaskBits = 4L;
+    private final long maxSequenceMask = ~(-1L << sequenceMaskBits);
+    private final long workerIdBits = 10L;
+    private final long maxWorkerId = ~(-1L << workerIdBits);
     private final long sequenceMaskShift = sequenceBits;
-    private final long workerIdShift = sequenceBits + sequenceMaskShift;
-    private final long timestampLeftShift = sequenceBits + workerIdBits;
-    private long workerId = 1L;
-    private static long sequenceMask = 0L;
+    private final long workerIdShift = sequenceBits + sequenceMaskBits;
+    private final long timestampLeftShift = sequenceBits + sequenceMaskBits + workerIdBits;
     private long sequence = 0L;
+    private static long sequenceMask = 0L;
+    private long workerId = 1L;
     private long lastTimestamp = -1L;
     private String applicationName;
     private final String sequenceMaskFilePath = System.getProperty("java.io.tmpdir") + File.separator + "sequenceMask";
 
+    private Snowflake() {
+    }
+
     public Snowflake(long epoch, String applicationName, long workerId) {
 
-        if( timeGen() > epoch ) {
+        if (timeGen() > epoch) {
             this.epoch = epoch;
         } else {
             throw new IllegalArgumentException("Snowflake not support epoch gt currentTime");
         }
 
-        if( workerId >= 0 && workerId <= maxWorkerId ) {
+        if (workerId >= 0 && workerId <= maxWorkerId) {
             this.workerId = workerId;
         } else {
             throw new IllegalArgumentException("workerID must gte 0 and lte 1023");
@@ -56,13 +58,13 @@ public class Snowflake {
 
     public Snowflake(long epoch, String applicationName, String zkConnectionString) {
 
-        if( timeGen() > epoch ) {
+        if (timeGen() > epoch) {
             this.epoch = epoch;
         } else {
             throw new IllegalArgumentException("Snowflake not support epoch gt currentTime");
         }
 
-        SnowflakeZookeeperHolder holder = new SnowflakeZookeeperHolder(zkConnectionString, applicationName);
+        SnowflakeZookeeperHolder holder = new SnowflakeZookeeperHolder(zkConnectionString, applicationName, maxWorkerId);
         boolean initFlag = holder.init();
         if (initFlag) {
             workerId = holder.getWorkerID();
@@ -71,14 +73,38 @@ public class Snowflake {
             throw new IllegalArgumentException("Failed to initialize SnowflakeZookeeperHolder.");
         }
 
-        if( workerId < 0 || workerId > maxWorkerId ) {
+        if (workerId < 0 || workerId > maxWorkerId) {
             throw new IllegalArgumentException("workerID must gte 0 and lte 1023.");
         }
 
         this.applicationName = applicationName;
         loadSequenceMask();
 
-        logger.info("epoch-{}, zookeeper-{}, sequenceMask-{}",this.epoch, zkConnectionString, sequenceMask);
+        logger.info("epoch-{}, zookeeper-{}, sequenceMask-{}", this.epoch, zkConnectionString, sequenceMask);
+    }
+
+    public static synchronized Snowflake getInstance(long epoch, String applicationName, String zkConnectionString) {
+
+        if (instance == null) {
+            synchronized (Snowflake.class) {
+                if (instance == null) {
+                    instance = new Snowflake(epoch, applicationName, zkConnectionString);
+                }
+            }
+        }
+        return instance;
+    }
+
+    public static synchronized Snowflake getInstance(long epoch, String applicationName, long workerId) {
+
+        if (instance == null) {
+            synchronized (Snowflake.class) {
+                if (instance == null) {
+                    instance = new Snowflake(epoch, applicationName, workerId);
+                }
+            }
+        }
+        return instance;
     }
 
     public synchronized long nextId() {
@@ -146,7 +172,7 @@ public class Snowflake {
         return workerId;
     }
 
-    private void loadSequenceMask(){
+    private void loadSequenceMask() {
         File sequenceMaskFile = new File(sequenceMaskFilePath);
         boolean exists = sequenceMaskFile.exists();
         if (exists) {
@@ -156,12 +182,12 @@ public class Snowflake {
                 sequenceMask = Integer.valueOf(properties.getProperty("sequenceMask"));
                 logger.info("sequenceMask loaded :{}", sequenceMask);
             } catch (IOException e) {
-                logger.warn("Failed to read sequenceMask from file",e);
+                logger.warn("Failed to read sequenceMask from file", e);
             }
         }
     }
 
-    private void setSequenceMask(long newSequenceMask){
+    private void setSequenceMask(long newSequenceMask) {
 
         File sequenceMaskFile = new File(sequenceMaskFilePath);
 
@@ -169,12 +195,12 @@ public class Snowflake {
 
         if (exists) {
             //update
-            logger.info("update file "+sequenceMaskFilePath);
+            logger.info("update file " + sequenceMaskFilePath);
             try {
                 FileUtils.writeStringToFile(sequenceMaskFile, "sequenceMask=" + newSequenceMask, false);
                 logger.info("local file cache sequenceMask is {}", newSequenceMask);
             } catch (IOException e) {
-                logger.error("Failed to update sequenceMaskFile",e);
+                logger.error("Failed to update sequenceMaskFile", e);
             }
         } else {
             try {
@@ -183,7 +209,7 @@ public class Snowflake {
                     logger.info("local file cache sequenceMask is {}", newSequenceMask);
                 }
             } catch (IOException e) {
-                logger.error("Failed to create sequenceMaskFile",e);
+                logger.error("Failed to create sequenceMaskFile", e);
             }
         }
     }

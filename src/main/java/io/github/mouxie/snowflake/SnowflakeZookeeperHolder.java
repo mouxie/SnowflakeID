@@ -20,23 +20,19 @@ import java.util.Properties;
 
 public class SnowflakeZookeeperHolder {
 
-    private Logger logger = LoggerFactory
-            .getLogger(SnowflakeZookeeperHolder.class);
-
+    private Logger logger = LoggerFactory.getLogger(SnowflakeZookeeperHolder.class);
     private int workerID;
-
+    private long maxWorkerId;
     private String zkAddressNode;
     private String nodeKeyName;
-
     private String prefixZkPath;
     private String pathForever;
     private String workIDFilePath;
     private String nodeKeyNameFilePath;
-
     private String connectionString;
     private long lastUpdateTime;
 
-    public SnowflakeZookeeperHolder(String connectionString, String applicationName) {
+    public SnowflakeZookeeperHolder(String connectionString, String applicationName, long maxWorkerId) {
         this.connectionString = connectionString;
         this.prefixZkPath = "/snowflake/" + applicationName;
         this.nodeKeyNameFilePath = System.getProperty("java.io.tmpdir") + File.separator + applicationName
@@ -45,11 +41,12 @@ public class SnowflakeZookeeperHolder {
         this.workIDFilePath = System.getProperty("java.io.tmpdir") + File.separator + applicationName
                 + File.separator + this.nodeKeyName + File.separator + "workerID";
         this.pathForever = this.prefixZkPath + "/forever";
+        this.maxWorkerId = maxWorkerId;
     }
 
     public boolean init() {
         try {
-            CuratorFramework curator = createWithOptions(connectionString, new RetryUntilElapsed(1000, 4), 10000, 10000);
+            CuratorFramework curator = createWithOptions(connectionString, new RetryUntilElapsed(1000, 4), 100000, 100000);
             curator.start();
             Stat stat = curator.checkExists().forPath(this.pathForever);
             if (stat == null) {
@@ -82,10 +79,16 @@ public class SnowflakeZookeeperHolder {
                     logger.info("created newNode:" + newNode);
                     String[] nodeKey = newNode.split("-----");
                     workerID = Integer.parseInt(nodeKey[1]);
+                    if (workerID > maxWorkerId) {
+                        logger.info("workerID gte maxWorkerId, delete whole forever node and recreate a new node");
+                        deleteNode(curator);
+                        zkAddressNode = createNode(curator);
+                    }
                     updateLocalWorkerID(workerID);
                     logger.info("[New NODE]forever node was not found,create a new node[{nodeKeyName}] on forever node with wokerID-{workerID} and started successfully ", nodeKeyName, workerID);
                 }
             }
+            curator.close();
         } catch (Exception e) {
             logger.error("Failed to start node, ERROR {}", e);
             try {
@@ -143,6 +146,15 @@ public class SnowflakeZookeeperHolder {
                     forPath(pathForever + "/" + nodeKeyName + "-----", nodeKeyName.getBytes());
         } catch (Exception e) {
             logger.error("Failed to create node, error msg {} ", e.getMessage());
+            throw e;
+        }
+    }
+
+    private void deleteNode(CuratorFramework curator) throws Exception {
+        try {
+            curator.delete().deletingChildrenIfNeeded().forPath(pathForever);
+        } catch (Exception e) {
+            logger.error("Failed to delete node, error msg {} ", e.getMessage());
             throw e;
         }
     }

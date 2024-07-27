@@ -6,7 +6,7 @@
 
     <groupId>io.github.mouxie</groupId>
     <artifactId>SnowflakeID</artifactId>
-    <version>1.0</version>
+    <version>1.0.1</version>
 
     <name>SnowflakeID</name>
     <description>A distributed unique ID generator service</description>
@@ -64,7 +64,7 @@
         <dependency>
             <groupId>org.apache.zookeeper</groupId>
             <artifactId>zookeeper</artifactId>
-            <version>3.6.0</version>
+            <version>3.8.4</version>
         </dependency>
     </dependencies>
 
